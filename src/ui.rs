@@ -1,4 +1,5 @@
 use crate::app::{App, Mode, Panel};
+use crate::devlog::DevLogEvent;
 use crate::remote_checker::CheckResult;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -47,7 +48,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         None => "never".to_string(),
     };
 
-    let header = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" DEVPULSE ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(format!(" {} projects ", total_p), Style::default().fg(Color::White)),
@@ -57,9 +58,20 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!(" {} remotes ", total_r), Style::default().fg(Color::White)),
         Span::styled(format!(" {}↑ ", up_r), Style::default().fg(Color::Green)),
         Span::styled(format!(" {}↓ ", down_r), Style::default().fg(Color::Red)),
-        Span::raw("  │  "),
-        Span::styled(format!("⟳ {}", refresh_text), Style::default().fg(Color::DarkGray)),
-    ]);
+    ];
+
+    if let Some(ref devlog) = app.devlog {
+        spans.push(Span::raw("  │  "));
+        spans.push(Span::styled(
+            format!(" {} events ", devlog.entries.len()),
+            Style::default().fg(Color::White),
+        ));
+    }
+
+    spans.push(Span::raw("  │  "));
+    spans.push(Span::styled(format!("⟳ {}", refresh_text), Style::default().fg(Color::DarkGray)));
+
+    let header = Line::from(spans);
 
     let block = Block::default()
         .borders(Borders::BOTTOM)
@@ -70,16 +82,31 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_main(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(60), // projects
-            Constraint::Percentage(40), // remotes
-        ])
-        .split(area);
+    if app.devlog.is_some() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(40), // projects
+                Constraint::Percentage(25), // remotes
+                Constraint::Percentage(35), // devlog
+            ])
+            .split(area);
 
-    draw_projects_table(f, app, chunks[0]);
-    draw_remotes_table(f, app, chunks[1]);
+        draw_projects_table(f, app, chunks[0]);
+        draw_remotes_table(f, app, chunks[1]);
+        draw_devlog_table(f, app, chunks[2]);
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(60), // projects
+                Constraint::Percentage(40), // remotes
+            ])
+            .split(area);
+
+        draw_projects_table(f, app, chunks[0]);
+        draw_remotes_table(f, app, chunks[1]);
+    }
 }
 
 fn draw_projects_table(f: &mut Frame, app: &App, area: Rect) {
@@ -258,6 +285,88 @@ fn draw_remotes_table(f: &mut Frame, app: &App, area: Rect) {
     f.render_stateful_widget(table, area, &mut state);
 }
 
+fn draw_devlog_table(f: &mut Frame, app: &App, area: Rect) {
+    let is_active = app.active_panel == Panel::DevLog;
+    let border_color = if is_active { Color::Cyan } else { Color::DarkGray };
+
+    let header = Row::new(vec![
+        Cell::from("Time").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Event").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Project").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Detail").style(Style::default().add_modifier(Modifier::BOLD)),
+    ])
+    .style(Style::default().fg(Color::DarkGray))
+    .height(1);
+
+    let entries = app
+        .devlog
+        .as_ref()
+        .map(|dl| dl.entries.as_slice())
+        .unwrap_or(&[]);
+
+    // Show most recent first
+    let rows: Vec<Row> = entries
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, entry)| {
+            let event_color = match entry.event {
+                DevLogEvent::NewCommit => Color::Green,
+                DevLogEvent::StatusClean => Color::Green,
+                DevLogEvent::StatusDirty => Color::Yellow,
+                DevLogEvent::BranchChange => Color::Magenta,
+                DevLogEvent::PushDetected => Color::Cyan,
+                DevLogEvent::RemoteUp => Color::Green,
+                DevLogEvent::RemoteDown => Color::Red,
+            };
+
+            let row_style = if is_active && i == app.selected_log {
+                Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else {
+                Style::default()
+            };
+
+            Row::new(vec![
+                Cell::from(entry.timestamp.format("%H:%M:%S").to_string())
+                    .style(Style::default().fg(Color::DarkGray)),
+                Cell::from(format!("{}", entry.event))
+                    .style(Style::default().fg(event_color)),
+                Cell::from(entry.project.clone())
+                    .style(Style::default().fg(Color::Cyan)),
+                Cell::from(truncate(&entry.detail, 50)),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let entry_count = entries.len();
+    let title = format!(" ▸ DevLog ({}) ", entry_count);
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(10),  // time
+            Constraint::Length(8),   // event
+            Constraint::Length(18),  // project
+            Constraint::Min(20),    // detail
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .padding(Padding::horizontal(1)),
+    );
+
+    let mut state = TableState::default();
+    if is_active {
+        state.select(Some(app.selected_log));
+    }
+    f.render_stateful_widget(table, area, &mut state);
+}
+
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = if let Some((msg, success)) = &app.status_message {
         let color = if *success { Color::Green } else { Color::Red };
@@ -277,18 +386,26 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
 fn footer_keys(app: &App) -> Line<'static> {
     match app.mode {
-        Mode::Browse => Line::from(vec![
-            Span::styled(" q", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" quit  "),
-            Span::styled("Tab", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" switch  "),
-            Span::styled("↑↓/jk", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" nav  "),
-            Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" actions  "),
-            Span::styled("r", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" refresh"),
-        ]),
+        Mode::Browse => {
+            let mut spans = vec![
+                Span::styled(" q", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(" quit  "),
+                Span::styled("Tab", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(" switch  "),
+                Span::styled("↑↓/jk", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(" nav  "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(" actions  "),
+                Span::styled("r", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(" refresh"),
+            ];
+            if app.devlog.is_some() {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled("l", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+                spans.push(Span::raw(" devlog"));
+            }
+            Line::from(spans)
+        }
         Mode::Actions => Line::from(vec![
             Span::styled(" a", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(" stage all  "),

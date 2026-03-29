@@ -13,6 +13,8 @@ pub struct Config {
     pub projects: Vec<ProjectConfig>,
     #[serde(default)]
     pub remotes: Vec<RemoteConfig>,
+    #[serde(default)]
+    pub devlog: DevLogConfig,
 }
 
 fn default_refresh() -> u64 {
@@ -40,6 +42,34 @@ pub struct RemoteConfig {
     pub ssh_user: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DevLogConfig {
+    #[serde(default = "default_devlog_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default = "default_devlog_max_display")]
+    pub max_display: usize,
+}
+
+impl Default for DevLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: None,
+            max_display: 100,
+        }
+    }
+}
+
+fn default_devlog_enabled() -> bool {
+    true
+}
+
+fn default_devlog_max_display() -> usize {
+    100
 }
 
 fn default_ssh_port() -> u16 {
@@ -173,4 +203,10 @@ scan_dirs = []
 # ssh_port = 22
 # ssh_user = "deploy"
 # tags = ["production"]
+
+# DevLog settings
+[devlog]
+enabled = true
+# path = "/custom/path/to/devlog.jsonl"  # default: ~/.local/share/devpulse/devlog.jsonl
+max_display = 100  # max entries shown in the TUI panel
 "#;

@@ -1,13 +1,16 @@
 use crate::config::Config;
+use crate::devlog::{self, DevLog};
 use crate::git_ops::{self, GitOpResult};
 use crate::git_scanner::{self, GitStatus};
 use crate::remote_checker::{self, CheckResult, RemoteStatus};
+use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Panel {
     Projects,
     Remotes,
+    DevLog,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +28,7 @@ pub struct App {
     pub active_panel: Panel,
     pub selected_project: usize,
     pub selected_remote: usize,
+    pub selected_log: usize,
     pub last_refresh: Option<Instant>,
     pub refreshing: bool,
     pub should_quit: bool,
@@ -32,10 +36,25 @@ pub struct App {
     pub input_buffer: String,
     pub status_message: Option<(String, bool)>, // (message, is_success)
     pub status_time: Option<Instant>,
+    pub devlog: Option<DevLog>,
+    prev_git_statuses: Vec<GitStatus>,
+    prev_remote_statuses: Vec<RemoteStatus>,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
+        let devlog = if config.devlog.enabled {
+            let path = config
+                .devlog
+                .path
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(DevLog::default_path);
+            Some(DevLog::new(path, config.devlog.max_display))
+        } else {
+            None
+        };
+
         Self {
             config,
             git_statuses: Vec::new(),
@@ -43,6 +62,7 @@ impl App {
             active_panel: Panel::Projects,
             selected_project: 0,
             selected_remote: 0,
+            selected_log: 0,
             last_refresh: None,
             refreshing: false,
             should_quit: false,
@@ -50,6 +70,9 @@ impl App {
             input_buffer: String::new(),
             status_message: None,
             status_time: None,
+            devlog,
+            prev_git_statuses: Vec::new(),
+            prev_remote_statuses: Vec::new(),
         }
     }
 
@@ -171,8 +194,27 @@ impl App {
 
     pub async fn refresh_all(&mut self) {
         self.refreshing = true;
+
+        // Save previous state for change detection
+        self.prev_git_statuses = self.git_statuses.clone();
+        self.prev_remote_statuses = self.remote_statuses.clone();
+
         self.refresh_git();
         self.refresh_remotes().await;
+
+        // Detect and log changes
+        if let Some(ref mut devlog) = self.devlog {
+            let mut events = devlog::detect_git_changes(
+                &self.prev_git_statuses,
+                &self.git_statuses,
+            );
+            events.extend(devlog::detect_remote_changes(
+                &self.prev_remote_statuses,
+                &self.remote_statuses,
+            ));
+            devlog.append(&events);
+        }
+
         self.last_refresh = Some(Instant::now());
         self.refreshing = false;
     }
@@ -180,7 +222,14 @@ impl App {
     pub fn toggle_panel(&mut self) {
         self.active_panel = match self.active_panel {
             Panel::Projects => Panel::Remotes,
-            Panel::Remotes => Panel::Projects,
+            Panel::Remotes => {
+                if self.devlog.is_some() {
+                    Panel::DevLog
+                } else {
+                    Panel::Projects
+                }
+            }
+            Panel::DevLog => Panel::Projects,
         };
     }
 
@@ -196,6 +245,14 @@ impl App {
                 if !self.remote_statuses.is_empty() {
                     self.selected_remote =
                         (self.selected_remote + 1) % self.remote_statuses.len();
+                }
+            }
+            Panel::DevLog => {
+                if let Some(ref devlog) = self.devlog {
+                    if !devlog.entries.is_empty() {
+                        self.selected_log =
+                            (self.selected_log + 1) % devlog.entries.len();
+                    }
                 }
             }
         }
@@ -219,6 +276,17 @@ impl App {
                     } else {
                         self.selected_remote - 1
                     };
+                }
+            }
+            Panel::DevLog => {
+                if let Some(ref devlog) = self.devlog {
+                    if !devlog.entries.is_empty() {
+                        self.selected_log = if self.selected_log == 0 {
+                            devlog.entries.len() - 1
+                        } else {
+                            self.selected_log - 1
+                        };
+                    }
                 }
             }
         }
