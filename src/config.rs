@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     #[serde(default = "default_refresh")]
     pub refresh_seconds: u64,
+    #[serde(default)]
+    pub scan_dirs: Vec<String>,
     #[serde(default)]
     pub projects: Vec<ProjectConfig>,
     #[serde(default)]
@@ -54,7 +57,12 @@ impl Config {
         }
         let contents =
             std::fs::read_to_string(&config_path).context("Failed to read config file")?;
-        let config: Config = toml::from_str(&contents).context("Failed to parse config")?;
+        let mut config: Config = toml::from_str(&contents).context("Failed to parse config")?;
+
+        // Auto-discover git repos from scan_dirs
+        let discovered = config.discover_projects();
+        config.merge_discovered(discovered);
+
         Ok(config)
     }
 
@@ -76,12 +84,78 @@ impl Config {
         println!("Created config at {}", config_path.display());
         Ok(())
     }
+
+    fn discover_projects(&self) -> Vec<ProjectConfig> {
+        let mut discovered = Vec::new();
+
+        for scan_dir in &self.scan_dirs {
+            let scan_path = PathBuf::from(scan_dir);
+            if !scan_path.is_dir() {
+                continue;
+            }
+
+            let entries = match fs::read_dir(&scan_path) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if !entry_path.is_dir() {
+                    continue;
+                }
+
+                // Skip hidden directories
+                let dir_name = entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+
+                // Check if it's a git repo
+                let git_dir = entry_path.join(".git");
+                if git_dir.exists() {
+                    discovered.push(ProjectConfig {
+                        name: dir_name,
+                        path: entry_path.to_string_lossy().to_string(),
+                        tags: vec!["auto".to_string()],
+                    });
+                }
+            }
+        }
+
+        // Sort by name for consistent ordering
+        discovered.sort_by(|a, b| a.name.cmp(&b.name));
+        discovered
+    }
+
+    fn merge_discovered(&mut self, discovered: Vec<ProjectConfig>) {
+        // Collect paths already manually listed
+        let existing_paths: std::collections::HashSet<String> = self
+            .projects
+            .iter()
+            .map(|p| p.path.clone())
+            .collect();
+
+        // Add discovered projects that aren't already manually listed
+        for project in discovered {
+            if !existing_paths.contains(&project.path) {
+                self.projects.push(project);
+            }
+        }
+    }
 }
 
 const DEFAULT_CONFIG: &str = r#"# DevPulse Configuration
 refresh_seconds = 30
 
-# Local projects to monitor
+# Directories to auto-scan for git repos (one level deep)
+# Every subdirectory with a .git folder will be added as a project
+scan_dirs = []
+
+# Manual project entries (these take priority over auto-discovered ones)
 # [[projects]]
 # name = "my-project"
 # path = "/home/user/projects/my-project"
