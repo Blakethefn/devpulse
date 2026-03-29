@@ -1,0 +1,31 @@
+[package]
+name = "devpulse"
+version = "0.1.0"
+edition = "2024"
+description = "A TUI dashboard for monitoring local projects and remote services"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Git
+git2 = "0.20"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# SSH
+ssh2 = "0.9"
+
+# Config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Utils
+chrono = "0.4"
+dirs = "6"
+anyhow = "1"

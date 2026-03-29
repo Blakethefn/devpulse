@@ -1,0 +1,40 @@
+# DevPulse Configuration
+# Copy this to ~/.config/devpulse/config.toml and edit to match your setup.
+# Or run `devpulse --init` to generate a starter config.
+
+refresh_seconds = 30
+
+# ── Local Projects ──────────────────────────────────────
+# Add your git repositories here. Each entry needs a name and path.
+
+[[projects]]
+name = "my-app"
+path = "/home/user/projects/my-app"
+tags = ["rust", "active"]
+
+[[projects]]
+name = "my-api"
+path = "/home/user/projects/my-api"
+tags = ["python", "active"]
+
+# ── Remote Services ─────────────────────────────────────
+# HTTP health checks — any URL that returns a status code.
+
+[[remotes]]
+name = "my-app.com"
+url = "https://my-app.com"
+tags = ["production"]
+
+[[remotes]]
+name = "api.my-app.com"
+url = "https://api.my-app.com/health"
+tags = ["production", "api"]
+
+# SSH connectivity checks — checks TCP + SSH handshake.
+
+# [[remotes]]
+# name = "prod-server"
+# ssh_host = "192.168.1.100"
+# ssh_port = 22
+# ssh_user = "deploy"
+# tags = ["production"]
